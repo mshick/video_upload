@@ -1,5 +1,3 @@
-$Id: README.txt,v 1.12.2.3.2.4 2010/06/09 00:32:36 bojanz Exp $
-
 The Video Upload module consists of a CCK field type that allows for
 the end user to upload video directly to YouTube, using a single
 account for the site. The Video Upload module requires the FileField
