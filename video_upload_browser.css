@@ -1,0 +1,48 @@
+/* $Id: video_upload_browser.css,v 1.1.2.2 2010/05/14 18:45:52 bojanz Exp $ */
+
+/**
+ * @file
+ * CSS for the Video Upload Browser method.
+ */
+ 
+.video-upload-element .widget-preview {
+  border-color:#CCCCCC;
+  border-style:solid;
+  border-width:0 1px 0 0;
+  float:left;
+  margin:0 10px 0 0;
+  max-width:30%;
+  padding:0 10px 0 0;
+}
+
+.video-upload-element .widget-preview .video-status {
+  width: 150px;
+  white-space: normal;
+}
+
+.video-upload-element .widget-edit {
+  float:left;
+  max-width:70%;
+}
+
+.video-upload-element {
+  margin: 1em 0;
+}
+
+.video-upload-element .widget-edit {
+  margin: 0 0 1em;
+}
+
+.video-upload-element .widget-edit .notice {
+  margin-bottom: 2em;
+}
+
+.video-upload-element .widget-edit .ahah-progress {
+  float: none;
+}
+
+.video-upload-item-delete img {
+  opacity: 0.4;
+  /* for IE */
+  filter:alpha(opacity=40);  
+}

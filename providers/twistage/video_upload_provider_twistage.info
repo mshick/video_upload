@@ -1,0 +1,8 @@
+name = Video Upload Twistage Provider
+description = Upload video to Twistage
+core = 6.x
+package = CCK
+php = 5.1
+dependencies[] = content
+dependencies[] = filefield
+dependencies[] = video_upload

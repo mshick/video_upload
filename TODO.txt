@@ -1,0 +1,37 @@
+$Id: TODO.txt,v 1.12.2.3.2.3 2010/05/14 14:08:01 bojanz Exp $
+
+List of to-do items for the video_upload module, in no particular order.
+@todo tags can also be found distributed througout the code.
+
+* Completely abstract out the Zend Gdata library so that this module
+  could use the Drupal Youtube API module. The reason for this is that
+  the Zend library requires modification of the PHP include_path
+  variable, which can be hard for shared-hosting sites.
+
+* Abstract out the YouTube specificity, so that this logic could apply
+  to other providers. This work has been started by moving most
+  YouTube logic into the providers directory. There is still a lot
+  left to do though.
+
+* Make a 2 step form? Not sure if this is better. The advantages:
+   - Collect all relevant info prior to submitting data to youtube
+  The disadvantages:
+   - it's a 2-step form, not sure how that would work with all CCK scenarios
+
+* Allow for multiple YouTube accounts per site (or per field instance,
+  etc).  The YouTube API limits uploads on accounts with more than
+  1000 videos:
+
+  http://code.google.com/apis/youtube/developers_guide_protocol.html#Uploading_Videos
+
+* Handle the selection of which thumbnail to use: YouTube provides 3
+  thumbnails, which the user should be able to select from.
+
+* The description that is sent/synchronized on YouTube should be able
+  to pull from fields other than node->body. This should be
+  configurable.
+
+* When configuring a field, any known vocabularies should be presented
+  as options for YouTube keywords
+
+* Extend token support

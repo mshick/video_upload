@@ -1,0 +1,8 @@
+name = Video Upload YouTube Provider
+description = Upload video to YouTube
+core = 6.x
+package = CCK
+php = 5.1
+dependencies[] = content
+dependencies[] = filefield
+dependencies[] = video_upload

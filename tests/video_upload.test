@@ -1,0 +1,242 @@
+<?php
+
+// $Id: video_upload.test,v 1.11.2.4.2.3 2010/05/14 14:19:03 bojanz Exp $
+
+/**
+ * @file
+ * Unit tests for the Video Upload module
+ */
+class videoUploadYouTubeTests extends DrupalWebTestCase {
+  function getInfo() {
+    return array(
+      'name' => t('Authentication'),
+      'description' => t('Makes an authentication request to YouTube'),
+      'group' => t('Video Upload'),
+    );
+  }
+
+  function setUp() {
+    parent::setUp('filefield', 'content', 'video_upload');
+  }
+
+  function accountConfigured() {
+    // First, verify that appropriate test account has been configured.
+    if (!$GLOBALS['video_upload_test_account']) {
+      $this->fail('To test YouTube communication, your settings.php file must contain an array with login information to a test account.');
+      return FALSE;
+    }
+    foreach ($GLOBALS['video_upload_test_account'] as $var => $value) {
+      variable_set($var, $value);
+    }
+    $this->pass(t('Test YouTube account is configured.'));
+    return TRUE;
+  }
+
+  function testAuthentication() {
+    if (!$this->accountConfigured()) {
+      return;
+    }
+
+    // Test connection object, with self-generating authentication.
+    $this->assertTrue(is_object(video_upload_connect(TRUE)), t('Successfully generated a YouTube connection object.'));
+
+    // Test authentication.
+    $http_client = video_upload_authenticate();
+    $this->assertTrue(is_object($http_client), t('Successfully authenticated with YouTube.'));
+
+    // Connect with existing authentication object.
+    $this->assertTrue(is_object(video_upload_connect($http_client)), t('Successfully connected with an existing authentication object.'));
+  }
+
+  function testFeeds() {
+    if (!$this->accountConfigured()) {
+      return;
+    }
+
+    $connection = video_upload_connect(TRUE);
+
+    // Grab a feed of videos.
+    $feed = _video_upload_gdata_get_feed(VIDEO_UPLOAD_YOUTUBE_DEFAULT_USER_FEED, $connection);
+    $this->assertTrue(is_object($feed), t('Successfully obtained a user video feed.'));
+  }
+
+  function testUpload() {
+    if (!$this->accountConfigured()) {
+      return;
+    }
+
+    // Create content type with video upload field.
+    $this->createVideoUploadField();
+
+    $user = $this->drupalCreateUser(array('create ' . $this->video_type . ' content'));
+    $this->drupalLogin($user);
+
+    // Create basic post.
+    $node = $this->postVideoUploadNode();
+    $nid = $node->nid;
+    // Verify that initial status is upload pending.
+    $this->assertEqual($node->{$this->video_field_name}[0]['video_status'], VIDEO_UPLOAD_STATUS_UPLOAD_PENDING, t('Initial video status is <em>Upload Pending</em>.'));
+    $this->assertEqual($node->{$this->video_field_name}[0]['video_id'], '', t('Provider ID is empty prior to upload to provider.'));
+
+    // Upload video.
+    $uploaded = $this->uploadAllVideos();
+    $this->assertEqual($uploaded, 1, t('Uploaded %count video to the provider.', array('%count' => $uploaded)));
+    // Pull node back out of database.
+    $node = node_load($nid, NULL, TRUE);
+    $id = $node->{$this->video_field_name}[0]['video_id'];
+    $this->assertEqual($node->{$this->video_field_name}[0]['video_status'], VIDEO_UPLOAD_STATUS_UNKNOWN, t('After upload to YouTube, video status (%actual) is <em>Unknown</em>.', array('%actual' => $node->{$this->video_field_name}[0]['video_status'])));
+    $this->assertNotNull($id, t('Provider ID is not empty after upload to provider.'));
+
+    // Make sure video appears on admin screen.
+    $user = $this->drupalCreateUser(array('administer uploaded videos', 'administer nodes', 'edit any ' . $this->video_type . ' content'));
+    $this->drupalLogin($user);
+    $this->drupalGet('admin/content/video-upload');
+    $this->assertText(t('Manage Video Uploads'), t('Successfully browsed to the video admin screen.'));
+    $this->assertText($id, t('Found new video id %id on video admin screen.', array('%id' => $id)));
+
+    // Verify that status doesn't change on edit.
+    $node = node_load($nid, NULL, TRUE);
+    $this->drupalGet('node/' . $node->nid . '/edit');
+    foreach (array('video_status', 'video_status_ts', 'video_id') as $key) {
+      $value = $node->{$this->video_field_name}[0][$key];
+      $html = '<input type="hidden" name="' . $this->video_field_name . '[0][' . $key . ']" id="edit-' . str_replace('_', '-', $this->video_field_name) . '-0-' . str_replace('_', '-', $key) . '" value="' . $value . '"  />';
+      $this->assertRaw($html, t('Found the correct %var (%val) on edit form.', array('%var' => $key, '%val' => $value)));
+    }
+
+    // Change title, make sure status and ts still match.
+    $edit = array(
+      'title' => $this->randomName(),
+    );
+    $this->drupalPost('node/' . $node->nid . '/edit', $edit, t('Save'));
+    if (is_object($node)) {
+      $old_node = clone $node;
+    }
+    $new_node = node_load($node->nid, NULL, TRUE);
+    foreach (array('video_id', 'video_status', 'video_status_ts') as $key) {
+      $this->assertEqual($old_node->{$this->video_field_name}[0][$key], $new_node->{$this->video_field_name}[0][$key], t('%var has not changed after editing a non-related part of the node.', array('%var' => $key)));
+    }
+
+    // Test various taxonomies.
+    $node = $this->postVideoUploadNode();
+
+  // Verify videos.
+    //  _video_upload_verify_all($fields);
+
+  // Delete videos queued for deletion.
+    //  _video_upload_delete_rejected_videos($fields);
+
+  // Update provider info for all flagged videos.
+    //  _video_upload_update_all_videos($fields);
+
+  // Upload any pending videos.
+
+
+    file_put_contents('/tmp/contants', print_r($node, TRUE));
+  }
+
+  function createVideoUploadField($settings = array()) {
+    if (!isset($this->video_type)) {
+      $this->video_type = 'videoupload' . mt_rand();
+      $this->drupalCreateContentType(array('type' => $this->video_type));
+    }
+    if (!isset($this->video_field_name)) {
+      $this->video_field_name = $this->randomName();
+    }
+
+    $defaults = array(
+      'field_name' => $this->video_field_name,
+      'type_name' => $this->video_type,
+      'label' => $this->randomName(),
+      'type' => 'video_upload',
+      'widget_type' => 'video_upload_widget',
+      'change' => 'Change basic information',
+      'weight' => '1',
+      'file_extensions' => 'mov avi mp4 mpa mpe mpg mpeg qt wmv',
+      'file_path' => '',
+      'max_filesize_per_file' => '',
+      'max_filesize_per_node' => '',
+      'use_browser_upload_method' => FALSE,
+      'auto_delete_rejected_videos' => 0,
+      'display' => 
+        array (
+          'default_width' => '425',
+          'default_height' => '355',
+          'small_width' => '225',
+          'small_height' => '187',
+          'thumb_width' => '120',
+          'thumb_height' => '90',
+          'related_videos' => 0,
+          'autoplay' => 0,
+        ),
+      'default_title' => '',
+      'default_title_sync' => VIDEO_UPLOAD_SYNC,
+      // @TODO keywords and descriptions are stripped out via submit
+      // handlers...make an API, or fix this test.  'default_description' =>
+      // 'Here we use some odd characters, such as ä and \' " ! etc,.',
+      'default_description' => 'submit handlers do not fire, so we have not the best test',
+      'default_description_sync' => VIDEO_UPLOAD_SYNC_APPEND,
+      // @TODO see previous TODO
+      // 'default_keywords' => 'testkeyword, ää with spaces even, and \'characters"!',
+      'default_keywords' => 'simple,elegant,but,not,ideal',
+      'default_keyword_sync' => VIDEO_UPLOAD_SYNC_APPEND,
+      'developer_tags' => '',
+      'video_category' => 'Film',
+      'description' => '',
+      'required' => 0,
+      'multiple' => '0',
+      'list_default' => '1',
+      'force_list_default' => '0',
+      'show_description' => '1',
+      'op' => 'Save field settings',
+      'module' => 'video_upload',
+      'widget_module' => 'video_upload',
+    );
+    $settings = $settings + $defaults;
+
+    // Since this isn't using the form, none of our submit hooks will fire to
+    // clean out the garbage data above, so we call it here.
+    $this->last_field = content_field_instance_create($settings);
+    return $this->last_field;
+  }
+
+  /**
+   * Create a post array for mimicing a video upload.
+   *
+   * @return Array
+   */
+  function createVideoUploadPost() {
+    $file = dirname(__FILE__) . '/movie.mpg';
+    $return = array(
+      'title' => $this->randomName(),
+      'body' => $this->randomName(),
+      'files[' . $this->video_field_name . '_0]' => $file,
+    );
+    return $return;
+  } 
+
+  function postVideoUploadNode() {
+    $edit = $this->createVideoUploadPost();
+
+    // Browse to node add page.
+    $this->drupalGet('node/add/' . $this->video_type);
+    $this->assertResponse(200, t('Browsed to node add page for type containing a video upload field.'));
+
+    // Upload video.
+    $this->drupalPost('node/add/' . $this->video_type, $edit, t('Save'));
+    $this->assertText(t('Video is being processed.'), t('Video successfully uploaded to Drupal.'));
+    $this->assertRaw(drupal_get_path('module', 'video_upload') . '/images/video.png', t('Found video processing image on new node.'));
+    file_put_contents('/tmp/video-view.html', $this->content);
+
+    // Check that the node exists in the database.
+    $node = node_load(array('title' => $edit['title']));
+    $this->assertTrue($node, t('Node %title found in database.', array('%title' => $node->title)));
+    return $node;
+  }
+
+  function uploadAllVideos() {
+    module_load_include('admin.inc', 'video_upload');
+    $fields = _video_upload_relevant_fields();
+    return _video_upload_upload_all($fields);
+  }
+
+}

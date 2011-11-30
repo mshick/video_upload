@@ -1,0 +1,964 @@
+<?php
+
+// $Id: youtube.inc,v 1.10.2.3.2.3 2010/05/14 14:19:03 bojanz Exp $
+
+/**
+ * @file Twistage service provider for video_upload
+ */
+
+require_once 'zend_gdata.inc';
+
+/**
+ * The upload url.
+ */
+define('VIDEO_UPLOAD_YOUTUBE_UPLOAD_URL', 'http://uploads.gdata.youtube.com/feeds/api/users/default/uploads');
+
+/**
+ * The YouTube base url for embedding video.
+ */
+define('VIDEO_UPLOAD_YOUTUBE_EMBED_URL', 'http://www.youtube.com/v');
+
+/**
+ * YouTube thumbnail (0) base url.
+ */
+define('VIDEO_UPLOAD_YOUTUBE_THUMB_URL', 'http://img.youtube.com/vi');
+
+/**
+ * The normal feed base.
+ */
+define('VIDEO_UPLOAD_YOUTUBE_FEED_BASE', 'http://gdata.youtube.com/feeds/api/videos');
+
+/**
+ * The feed for an authenticated user that shows all videos.
+ */
+define('VIDEO_UPLOAD_YOUTUBE_DEFAULT_USER_FEED', 'http://gdata.youtube.com/feeds/api/users/default/uploads');
+
+/**
+ * The new iframe embed URL
+ */
+define('VIDEO_UPLOAD_YOUTUBE_IFRAME_EMBED_URL', 'http://www.youtube.com/embed'); 
+
+ 
+/**
+ * Implementation of hook_menu().
+ */
+function video_upload_provider_youtube_menu() {
+  $items['admin/settings/video-upload/youtube'] = array(
+    'title' => 'YouTube Settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('_video_upload_admin_youtube_settings_form'),
+    'access arguments' => array('administer video upload settings'),
+    'description' => 'YouTube video provider settings for the <em>Video Upload</em> module.',
+    'type' => MENU_LOCAL_TASK,
+  );
+  return $items;
+}
+
+/**
+ * Implementation of hook_video_upload_provider_info().
+ */
+function video_upload_provider_youtube_video_upload_provider_info($op = 'widget') {
+  switch($op) {
+    case 'widget':
+      return array(
+        'video_upload_provider_youtube' => array(
+          'label' => t('Upload/Edit/Display Video with YouTube'),
+          'field types' => array('video_upload'),
+          'multiple values' => CONTENT_HANDLE_CORE,
+          'callbacks' => array(
+            'default value' => CONTENT_CALLBACK_CUSTOM,
+          ),
+          // Description to use on forms to describe this widget.
+          'description' => t('Upload video files to YouTube.'),
+        ),
+      );
+    case 'info':
+      return array( 'youtube' => array(
+              'name' => 'YouTube',              
+              'description' => 'Allows video uploads and management to YouTube',
+            ),);
+  }
+}
+
+function video_upload_provider_youtube_settings($op, $widget = array()) {
+  switch($op) {
+    case 'form':
+      // Provider specific fieldset
+      $form['provider'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Provider Options'),
+        '#tree' => TRUE,
+        '#collapsible' => TRUE,
+      );
+
+      // Video provider name / human readable
+      $form['provider']['name'] = array(
+        '#type' => 'hidden',
+        '#value' => 'YouTube',
+      );
+      // Video provider type / machine readable - very important!
+      $form['provider']['type'] = array(
+        '#type' => 'hidden',
+        '#value' => 'youtube',
+      );
+            
+      $form['display']['object_embed'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Object embeds'),
+        '#description' => t('Use the old object embed method. By default new iframe method is used.'),
+        '#default_value' => $widget['display']['object_embed'],
+      );
+      $form['display']['related_videos'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Show related videos'),
+        '#default_value' => $widget['display']['related_videos'],
+        '#description' => t('Show related videos in the player after the video has finished.'),
+      );
+      $form['display']['autoplay'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Auto-play video on page load'),
+        '#default_value' => $widget['display']['autoplay'],
+      );
+      $form['display']['fullscreen'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Enable Fullscreen'),
+        '#description' => t('Show a <em>fullscreen</em> button on the embedded player.'),
+        '#default_value' => isset($widget['display']['fullscreen']) ? $widget['display']['fullscreen'] : TRUE,
+      );
+
+      // Video category (this is a fixed list from YouTube).
+      $form['provider']['video_category'] = array(
+        '#type' => 'select',
+        '#title' => t('Video Category'),
+        '#options' => _video_upload_youtube_available_categories(),
+        '#default_value' => $widget['video_category'],
+        '#required' => TRUE,
+        '#description' => t('The video provider requires that videos be placed into one of these categories'),
+      );
+
+      // Developer tags.
+      $form['provider']['developer_tags'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Developer Tags'),
+        '#default_value' => $widget['provider']['developer_tags'],
+        '#description' => t('Videos uploaded to the video provider can have hidden tags associated with them for later organization and tracking. Separate tags with a comma.'),
+      );
+      if (module_exists('token')) {
+        $form['developer_tags']['#description'] .= t('<br />The following tokens can be used in <em>Developer Tags</em>');
+        $form['developer_tags']['#suffix'] = theme('fieldset', array('#children' => theme('token_help', 'user'), '#collapsed' => TRUE, '#collapsible' => TRUE, '#title' => t('Tokens')));
+      }
+            
+
+      return $form;
+
+    case 'save':
+    
+      return array();      
+    
+  }
+}
+
+/**
+ * Perform the file upload.
+ */
+function video_upload_provider_youtube_upload($video, $node, $field) {
+  static $http_client;
+  if (!$http_client) {
+    $http_client = video_upload_provider_youtube_authenticate();
+  }
+
+  $yt = video_upload_provider_youtube_connect($http_client);
+  if (!$yt) {
+    return FALSE;
+  }
+
+  $yt_video = video_upload_provider_youtube_video_entry();
+  video_upload_provider_youtube_construct_media_group($yt, $yt_video, $node, $field);
+
+  // Attach the file.
+  _video_upload_provider_youtube_attach_video($yt, $yt_video, $video);
+
+  // Send the video.
+  return _video_upload_provider_youtube_insert_video($yt, $yt_video);
+}
+
+/**
+ * Theme a YouTube link
+ */
+function theme_video_upload_provider_youtube_video_link($yt_id) {
+  return url(VIDEO_UPLOAD_YOUTUBE_EMBED_URL . '/' . $yt_id);
+}
+
+/**
+ * Theme a YouTube player url
+ */
+function theme_video_upload_provider_youtube_player_url($video_id) {
+  return url(VIDEO_UPLOAD_YOUTUBE_EMBED_URL . '/' . $video_id);
+}
+
+/**
+ * Theme a YouTube stillframe URL
+ */
+function theme_video_upload_provider_youtube_video_stillframe($yt_id) {
+  // @todo There must be a bigger stillframe available. Need to find it.
+  return url(VIDEO_UPLOAD_YOUTUBE_THUMB_URL . '/' . $yt_id . '/1.jpg' . $flag);
+}
+
+/**
+ * Verify that an uploaded video 
+ *   zend_gdata.inc
+ */
+function video_upload_validate_youtube($id) {
+  if ($http_client = video_upload_provider_youtube_authenticate()) {
+    $yt = video_upload_provider_youtube_connect($http_client);
+    $status = video_upload_provider_youtube_get_status($id, $yt);
+    return $status;
+  }
+  return VIDEO_UPLOAD_STATUS_UNKNOWN;
+}
+
+/**
+ * List of available YouYube categories.
+ * @todo pull automatically and cache using
+ *   VIDEO_UPLOAD_GDATA_CATEGORIES_SCHEME
+ */
+function _video_upload_youtube_available_categories() {
+  $categories = array(
+    'Film',
+    'Autos',
+    'Music',
+    'Animals',
+    'Sports',
+    'Travel',
+    'Shortmov',
+    'Videoblog',
+    'Games',
+    'Comedy',
+    'People',
+    'News',
+    'Entertainment',
+    'Education',
+    'Howto',
+    'Nonprofit',
+    'Tech',
+  );
+  // Must have a keyed array so the actual value gets stored instead of just
+  // the numeric key.
+  return array_combine($categories, $categories);
+}
+
+/**
+ * @defgroup "GData Wrapper Functions."
+ * @{
+ */
+
+/**
+ * YouTube Authentication.
+ */
+function video_upload_provider_youtube_authenticate() {
+  return _video_upload_gdata_authenticate_youtube();
+}
+
+/**
+ * YouTube/GData Object.
+ * @param $http_client
+ *   object|boolean http_client. If passed as TRUE, the http_client will be
+ *   generated
+ */
+function video_upload_provider_youtube_connect($http_client = NULL) {
+  if ($http_client === TRUE) {
+    // Get new http authentication.
+    $http_client = video_upload_provider_youtube_authenticate();
+  }
+  return _video_upload_gdata_youtube($http_client);
+}
+
+/**
+ * Video Entry.
+ */
+function video_upload_provider_youtube_video_entry() {
+  return _video_upload_gdata_video_entry();
+}
+
+/**
+ * Media Group contains the title, developer tags, YouTube category and
+ * keywords.
+ */
+function video_upload_provider_youtube_construct_media_group($yt, $video, $node, $field) {
+  _video_upload_gdata_construct_media_group($yt, $video, $node, $field);
+  return $video;
+}
+
+/**
+ * YouTube Token Array
+ * @return array
+ */
+function video_upload_provider_youtube_get_token_array($yt, $video) {
+  return _video_upload_gdata_get_token_array($yt, $video);
+}
+
+/**
+ * Remove a video from YouTube.
+ */
+function video_upload_provider_youtube_delete_video_remote($yt, $video) {
+  $result = _video_upload_gdata_delete_video($yt, $video);
+}
+
+/**
+ * @} End defgroup "GData Wrapper Functions."
+ */
+
+/**
+ * Gets the YouTube category. Defaults to entertainment, since this is a
+ * required item by youtube.
+ */
+function _video_upload_get_video_category($node, $field) {
+  return $field['widget']['video_category'] ? $field['widget']['video_category'] : 'Entertainment';
+}
+
+
+
+/**
+ * Syncronize YouTube fields with node.
+ *  - title
+ *  - keywords
+ *  - description
+ */
+function _video_upload_provider_youtube_update_video_remote($yt, $video, &$local_video, $node) {
+  $update = FALSE;
+  $field = $local_video->field;
+  $delta = $local_video->delta;
+
+  $title = _video_upload_set_default_title($node, $field, $delta, 'youtube');
+  if ($video->getVideoTitle() != $title) {
+    // set video title
+    $video->mediaGroup->title->text = $title;
+    $update = TRUE;
+  }
+
+  // Set keywords based on taxonomy.
+  $keywords = _video_upload_get_video_keywords($node, $field, 'youtube');
+  if ($video->mediaGroup->getKeywords()->getText() != $keywords) {
+    $video->mediaGroup->keywords->text = $keywords;
+    $update = TRUE;
+  }
+
+  $description = _video_upload_set_default_description($node, $field, $delta, 'youtube');
+  if ($video->getVideoDescription() != $description) {
+    $video->mediaGroup->description->text = $description;
+    $update = TRUE;
+  }
+  
+  if ($field['widget']['publish_sync']) {
+    $state = _video_upload_provider_youtube_get_state($video);
+    $node_list = $node->status ? 'allowed' : 'denied';
+    if ($state->state['permission']['value'] != $node_list) {
+      $state->state['permission']['value'] = $node_list;
+      $video->extensionElements[$state->key]->setExtensionAttributes($state->state);
+      $update = TRUE;
+    }   
+  }
+  
+  if ($update) {
+    // The video has been updated, send changes to YouTube.
+    if (_video_upload_gdata_update_video($yt, $video)) {
+      // Set status to 2 to indicate an update has occurred.
+      $local_video->video_status = VIDEO_UPLOAD_STATUS_OK_SYNCED;
+      $local_video->update = true;
+    }
+  }
+  else {
+    // Our video must be synced if no changes were necessary
+   $local_video->video_status = VIDEO_UPLOAD_STATUS_OK_SYNCED;
+   $local_video->update = false;
+  }
+
+  return $local_video;
+}
+
+function _video_upload_provider_youtube_get_state($video) {
+  // Set listed / unlisted based on published state of node
+  // Slightly more complicated because Zend lacks native support
+  $extensions = $video->getExtensionElements();
+  foreach ($extensions as $key => $element) {
+    $attr = $element->getExtensionAttributes();
+    if ($attr['action']['value'] == 'list') {
+      $video_state = new stdClass();
+      $video_state->state = $attr;
+      $video_state->key = $key;
+    }
+  }
+  return $video_state;
+}
+
+/**
+ * Get the status of a video
+ * @param mixed $vid 
+ *   A YouTube ID or a video object
+ */
+function video_upload_provider_youtube_get_status($vid, $yt) {
+  $video = (gettype($vid) == 'string') ? video_upload_provider_youtube_get_video_object($vid, $yt) : $video;
+  if ($video) {  
+    $status = _video_upload_gdata_get_video_status($video);
+
+    // Translate from GData value to video upload values.
+    if ($status->status === TRUE) {
+      $status->status = VIDEO_UPLOAD_STATUS_OK;
+    }
+    elseif ($status->status === FALSE) {
+      $status->status = VIDEO_UPLOAD_STATUS_BAD;
+    }
+
+    return $status;
+  }
+  return;
+}
+
+/**
+ * Get a YouTube video object by id.
+ * Implementation of hook_get_video_object(). 
+ * 
+ * @param string $id
+ *   A YouTube ID
+ * @param object $yt
+ *   YouTube connection object
+ */
+function video_upload_provider_youtube_get_video_object($id, $yt) {
+  if (!$yt) {
+    return FALSE;
+  }
+
+  // @TODO Once YouTube API offers a way to do this without looping
+  //   through the entire feed, this can be optimized.
+  // return $yt->getVideoEntry($id);
+
+  // Get feed of all videos (!)
+  $feed = _video_upload_gdata_get_feed(VIDEO_UPLOAD_YOUTUBE_DEFAULT_USER_FEED, $yt);
+  if ($feed) {
+    foreach ($feed as $video) {
+      if ($video->getVideoId() == $id) {
+        return $video;
+      }
+    }
+  }
+}
+
+/**
+ * @return string the proper url for searching on a specific developer tag
+ *   also, this currently isn't much use since it won't find the rejected
+ *   videos
+ */
+function _video_upload_get_developer_tag_feed_url($tag) {
+  // Note, the YouTube api fails if urls are encoded with drupal_urlencode.
+  $url = VIDEO_UPLOAD_YOUTUBE_FEED_BASE . '/-/' . urlencode('{' . VIDEO_UPLOAD_GDATA_DEVELOPER_TAG_SCHEME . '}' . $tag);
+  return $url;
+}
+
+/**
+ * Attach the file for upload.
+ */
+function _video_upload_provider_youtube_attach_video(&$yt, &$yt_video, $video) {
+  _video_upload_gdata_attach_video($yt, $yt_video, $video->filepath, $video->filemime);
+}
+
+/**
+ * Upload the video to YouTube.
+ * @param object $yt
+ *   YouTube object
+ * @param object $yt_video
+ *   Video object
+ * @return The new video.
+ */
+function _video_upload_provider_youtube_insert_video(&$yt, &$yt_video) {
+  return _video_upload_gdata_insert_video($yt, $yt_video);
+}
+
+/**
+ * Implementation of hook_requirements().
+ *
+ * Checks for the existence required variable settings
+ */
+function video_upload_provider_youtube_requirements($phase) {
+
+  $requirements = array();
+
+  // Ensure translations don't break at install time.
+  $t = get_t();
+
+  // Get GData-specific requirements.
+
+  $gdata_requirements = _video_upload_gdata_requirements($phase);
+
+  if ($phase == 'runtime') {
+
+    $username      = variable_get('video_upload_youtube_username', FALSE);
+    $password      = variable_get('video_upload_youtube_password', FALSE);
+    $developer_key = variable_get('video_upload_youtube_developer_key', FALSE);
+
+    // Must have certain settings to use.
+    if (!$username) {
+      $requirements['video_upload_username'] = array(
+        'title' => $t('Video Upload: Username'),
+        'value' => $t('Not Found'),
+        'severity' => REQUIREMENT_ERROR,
+        'description' => $t('The Video Upload module requires at least one YouTube username/password combo, which can be set <a href="!url">here</a>.', array('!url' => url('admin/settings/video-upload'))),
+      );
+    }
+    if (!$password) {
+      $requirements['video_upload_password'] = array(
+        'title' => $t('Video Upload: Password'),
+        'value' => $t('Not Found'),
+        'severity' => REQUIREMENT_ERROR,
+        'description' => $t('The Video Upload module requires at least one YouTube username/password combo, which can be set <a href="!url">here</a>.', array('!url' => url('admin/settings/video-upload'))),
+      );
+    }
+    if (!$developer_key) {
+      $requirements['video_upload_developer_key'] = array(
+        'title' => $t('Video Upload: YouTube Developer Key'),
+        'value' => $t('Not Found'),
+        'severity' => REQUIREMENT_ERROR,
+        'description' => $t('The Video Upload module requires a <a href="!devurl">YouTube Developer Key</a>, which can be set <a href="!url">here</a>.', array('!url' => url('admin/settings/video-upload'), '!devurl' => url('http://code.google.com/apis/youtube/dashboard'))),
+      );
+    }
+
+    if ($username && $password && $developer_key && !video_upload_provider_youtube_authenticate()) {
+      // Failed to connect/authenticate.
+      $requirements['video_upload_authentication'] = array(
+        'title' => $t('Video Upload: YouTube Authentication'),
+        'value' => $t('Failed'),
+        'severity' => REQUIREMENT_ERROR,
+        'description' => $t('The Video Upload module has the required information, but was unable to authenticate to YouTube. There may be an error in one or more of the following: !list These settings can be reviewed <a href="!url">here</a>.', array('!list' => theme('item_list', array('username', 'password', 'developer key')), '!url' => url('admin/settings/video-upload'))),
+      );
+    }
+
+    if (empty($requirements) && empty($gdata_requirements)) {
+      $requirements['video_upload'] = array(
+        'title' => $t('Video Upload'),
+        'value' => $t('Properly configured'),
+        'severity' => REQUIREMENT_OK,
+      );
+    }
+  }
+
+  return array_merge($requirements, $gdata_requirements);
+}
+
+
+/**
+ * Callback function for admin/settings/video-upload/youtube
+ * @return
+ *   Returns an array defining the admin settings form
+ */
+function _video_upload_admin_youtube_settings_form() {
+  module_load_include('inc', 'video_upload', 'video_upload.admin');
+  $form['#submit'][] = '_video_upload_admin_settings_form_submit';
+  
+  $form['youtube'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('YouTube API Settings'),
+  );
+  $form['youtube']['video_upload_youtube_developer_key'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Developer Key'),
+    '#description' => t('A YouTube <a href="!url">Developer Key</a> is required', array('!url' => url('http://code.google.com/apis/youtube/dashboard/'))),
+    '#default_value' => variable_get('video_upload_youtube_developer_key', FALSE),
+    '#required' => TRUE,
+  );
+  $form['youtube']['video_upload_youtube_username'] = array(
+    '#type' => 'textfield',
+    '#title' => t('YouTube Username'),
+    '#default_value' => variable_get('video_upload_youtube_username', FALSE),
+    '#required' => TRUE,
+    '#size' => 25,
+  );
+  $form['youtube']['video_upload_youtube_password'] = array(
+    '#type' => 'password_confirm',
+    '#title' => t('YouTube Account Password'),
+    '#size' => 25,
+  );
+  $form['youtube']['video_upload_resync'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Resync !provider Videos', array('!provider' => 'YouTube')),
+    '#description' => t('All synced videos from this provider will queued for resynchronization'),
+    '#required' => false,
+  );
+  $form['youtube']['video_upload_provider'] = array(
+    '#type' => 'hidden',
+    '#default_value' => 'youtube',    
+  );  
+  
+  return system_settings_form($form);
+}
+
+function video_upload_provider_youtube_success() {
+  if (isset($_GET['id'])) {
+    $vid = $_GET['id'];
+    $value = array('video_id' => $vid,
+                   'video_status' => 'unknown',
+                   'video_provider' => 'youtube',   
+                   'error' => FALSE );
+    return $value;
+  }
+  else {
+    return false;
+  }
+}
+
+
+function video_upload_provider_youtube_browser_method_upload_form($token_array) {
+  $form['#action'] = $token_array['url'] .= '?nexturl=' . url('video-upload/success/youtube', array('absolute' => TRUE));
+
+  // YouTube upload token.
+  $form['token'] = array(
+    '#type' => 'hidden',
+    '#name' => 'token',
+    '#value' => $token_array['token'],
+  );
+  
+  return $form;
+}
+
+
+/**
+ * Implementation of hook_theme().
+ */
+function video_upload_provider_youtube_theme() {
+  $theme = array(
+    'video_upload_provider_youtube_video' => array(
+      'arguments' => array('yt_id' => NULL, 'width' => '425', 'height' => '355', 'field' => array(), 'params' => array(), 'attributes' => array()),
+    ),
+    'video_upload_provider_youtube_video_object' => array(
+      'arguments' => array('yt_id' => NULL, 'width' => '425', 'height' => '355', 'field' => array(), 'params' => array(), 'attributes' => array()),
+    ),    
+    'video_upload_provider_youtube_video_thumb' => array(
+      'arguments' => array('yt_id' => NULL, 'flag' => ''),
+    ),    
+    'video_upload_provider_youtube_video_link' => array(
+      'arguments' => array('yt_id' => NULL),
+    ),
+    ),    
+    'video_upload_provider_youtube_player_url' => array(
+      'arguments' => array('video_id' => NULL),
+    ),    
+  );
+  return $theme;
+}
+
+/**
+ * Theme a YouTube video with iframe method
+ */
+function theme_video_upload_provider_youtube_video($yt_id, $width, $height, $field, $params,  $attributes) {
+  if ($field['widget']['display']['object_embed']) {
+    return theme('video_upload_provider_youtube_video_object', $yt_id, $width, $height, $field, $params,  $attributes);
+  }
+
+  $formatter = $field['widget']['display']['formatter'];
+  $video_url = VIDEO_UPLOAD_YOUTUBE_IFRAME_EMBED_URL . '/' . $yt_id;
+
+  static $v = 1;
+  $default_attributes = array(
+    'type' => 'text/html',
+    'height' => $height,
+    'width' => $width,
+    'src' => $video_url,
+    'id' => 'videoEmbedYouTube' . $v,
+    'frameborder' => '0',
+  );
+  $v ++;
+
+  $all_attributes = $attributes ? array_merge($default_attributes, $attributes) : $default_attributes;
+
+  return '<iframe ' . drupal_attributes($all_attributes) . '></iframe>';
+}
+
+/**
+ * Theme a YouTube thumb
+ */
+function theme_video_upload_provider_youtube_video_thumb($yt_id, $flag) {
+  $attributes['src'] = VIDEO_UPLOAD_YOUTUBE_THUMB_URL . '/' . $yt_id . '/1.jpg' . $flag;
+  $attributes['alt'] = t('YouTube Thumbnail');
+  return $attributes;
+}
+
+
+/**
+ * Theme a video as an object (legacy method)
+ */ 
+function theme_video_upload_provider_youtube_video_object($yt_id, $width, $height, $field, $params, $attributes) {
+  $video_url = VIDEO_UPLOAD_YOUTUBE_EMBED_URL . '/' . $yt_id;
+
+  if (!$field['widget']['display']['related_videos']) {
+    // Related videos.
+    $video_url .= '&rel=0';
+  }
+  if ($field['widget']['display']['autoplay']) {
+    // Autoplay.
+    $video_url .= '&autoplay=1';
+  }
+
+  $default_params = array(
+    'movie' => $video_url,
+    'wmode' => 'transparent',
+    'bgcolor' => '#FFFFFF',
+  );
+
+  if ($field['widget']['display']['fullscreen']) {
+    // Fullscreen.
+    $video_url .= '&fs=1';
+    $default_params['allowFullScreen'] = 'true';
+  }
+
+  $all_params = array_merge($default_params, $params);
+  $parameters = '';
+  foreach ($all_params as $p_name => $p_value) {
+    $parameters .= '
+    <param name="' . $p_name . '" value="' . $p_value .'" />
+';
+  }
+
+  static $v = 1;
+  $default_attributes = array(
+    'type' => 'application/x-shockwave-flash',
+    'height' => $height,
+    'width' => $width,
+    'data' => $video_url,
+    'id' => 'videoEmbed' . $v,
+    'allowFullScreen' => TRUE,
+  );
+  $v ++;
+
+  $all_attributes = array_merge($default_attributes, $attributes);
+
+  $embed_attributes = array(
+    'src' => $all_attributes['data'],
+    'type' => $all_attributes['type'],
+    'wmode' => 'transparent',
+    'width' => $all_attributes['width'],
+    'height' => $all_attributes['height'],
+    'allowFullScreen' => $all_attributes['allowFullScreen'],
+  );
+  $embed = '<embed ' . drupal_attributes($embed_attributes) . '></embed>';
+
+  return '
+  <object ' . drupal_attributes($all_attributes) . '>'
+    . $parameters . $embed . '</object>';
+}
+
+function video_upload_provider_youtube_verify_all($videos) {
+  $video_ids = array();
+  foreach ($videos as $video_id => $video) {
+    $video_ids[] = $video_id;  
+  }
+
+  // Establish provider connection.
+  $connection = video_upload_provider_youtube_connect(TRUE);
+
+  // Get a feed of all the user's videos (!) 
+  // @fixme
+  //   Unfortunately, this is currently the only way to check on
+  //   videos that are not yet published.  A much more efficient and
+  //   sane method would be to only look up the videos on which we
+  //   don't have a status.
+  $feed = _video_upload_gdata_get_feed(VIDEO_UPLOAD_YOUTUBE_DEFAULT_USER_FEED, $connection);
+
+  if ($feed) {
+    foreach ($feed as $video) {
+      if (!in_array($video->getVideoId(), $video_ids)) {
+        // This isn't in the list of videos we currently care to check.
+        continue;
+      }
+
+      $status = _video_upload_gdata_get_video_status($video);
+
+      if ($status->status === FALSE) {
+        // The video is bad, the node should be deleted, or unpublished, or
+        // perhaps the user should be notified Setting status to -1 queues
+        // the video for deletion.
+        $local_video = $videos[$video->getVideoId()];
+        $local_video->video_status = VIDEO_UPLOAD_STATUS_BAD;
+        _video_upload_update_video($local_video);
+      }
+      elseif ($status->status === TRUE) {
+        // The video is good, update the table.
+        $local_video = $videos[$video->getVideoId()];
+
+        $node = node_load($local_video->nid);
+        // Update YouTube if applicable.
+        _video_upload_provider_youtube_update_video_remote($connection, $video, $local_video, $node);
+
+        // If for some reason we got stuck with an updated video, but unknown status it should be rectified
+        $video_status = $local_video->video_status;
+        if($video_status != VIDEO_UPLOAD_STATUS_OK || $video_status != VIDEO_UPLOAD_STATUS_OK_SYNCED) {
+          $local_video->video_status = VIDEO_UPLOAD_STATUS_OK;
+        }
+
+        // Initial update will download the stillframe
+        if (!empty($local_video->field['widget']['stillframe_field'])) {
+          // Get the YouTube stillframe file
+          $stillframe = video_upload_stillframe($video_id, 'youtube');
+          if ($stillframe) {
+            $local_video->stillframe = $stillframe;
+          } else {
+            // If we don't have it, set the flag to try again
+            $local_video->video_status = VIDEO_UPLOAD_STATUS_STILLFRAME;
+          }
+        }              
+
+        // The video is good, update the node.
+        _video_upload_update_video($local_video);
+
+        // @TODO Notify the author, or expose this to trigger/action functionality.
+      }
+      else {
+        // Nothing found on the video, wait until next time.
+      }
+    } 
+  }
+}
+
+function video_upload_provider_youtube_update_all($videos) {
+  $video_ids = array();
+  foreach ($videos as $video_id => $video) {
+    $video_ids[] = $video_id;  
+  }
+
+  // Establish provider connection.
+  $connection = video_upload_provider_youtube_connect(TRUE);
+
+  // Get a feed of all the user's videos (!). 
+  // @fixme unfortunately, this is currently the only way to check on videos
+  //        that are not yet published.  A much more efficient and sane
+  //        method would be to only look up the videos on which we don't
+  //        have a status
+  if ($feed = _video_upload_gdata_get_feed(VIDEO_UPLOAD_YOUTUBE_DEFAULT_USER_FEED, $connection)) {
+    foreach ($feed as $video) {
+      if (!in_array($video->getVideoId(), $video_ids)) {
+        continue;
+      }
+      // Load the node in question.
+      $local_video = $videos[$video->getVideoId()];
+      $node = node_load(array('nid' => $local_video->nid));
+      _video_upload_provider_youtube_update_video_remote($connection, $video, $local_video, $node);
+
+      if ($local_video->sync === VIDEO_UPLOAD_STATUS_STILLFRAME) {
+        // Get the YouTube stillframe file
+        $local_video->stillframe = video_upload_stillframe($video_id, 'youtube');
+      }
+
+      // The video may have been updated, thus the status may have changed.
+      _video_upload_update_video($local_video);
+    }
+  }
+}
+
+
+function video_upload_provider_youtube_delete_rejected_videos($videos) {
+  $video_ids = array();
+  foreach ($videos as $video_id => $video) {
+    $video_ids[] = $video_id;  
+  }
+  
+  // Establish provider connection.
+  $connection = video_upload_provider_youtube_connect(TRUE);
+
+  // Get a feed of all the user's videos (!).
+  // @FIXME
+  //   Unfortunately, this is currently the only way to check on videos that
+  //   are not yet published.  A much more efficient and sane method would be
+  //   to only look up the videos on which we don't have a status.
+  if ($feed = _video_upload_gdata_get_feed(VIDEO_UPLOAD_YOUTUBE_DEFAULT_USER_FEED, $connection)) {
+    foreach ($feed as $video) {
+      if (!in_array($video->getVideoId(), $video_ids)) {
+        continue;
+      }
+
+      // Delete the video from the provider.
+      video_upload_provider_youtube_delete_video_remote($connection, $video);
+
+      // Remove record from local table.
+      $local_video = $videos[$video->getVideoId()];
+      video_upload_delete_local($local_video);
+    }
+  }
+}
+
+/**
+ * Implementation of hook_process();
+ * @param string $op
+ * @param mixed $value
+ * 
+ * @return mixed
+ */
+function video_upload_provider_youtube_process($op, $value) {
+  switch ($op) {
+    case 'title':
+      // Max 60 characters for title.
+      return substr($value, 0, 60);
+    
+    case 'description':
+      // No tags allowed. 5000 char count
+      return truncate_utf8(strip_tags($value), 5000, TRUE, TRUE);
+      
+    case 'keywords':
+      $keywords = $value;
+      if (is_array($keywords)) {
+        foreach ($keywords as &$term) {
+          // No white spaces allowed in keywords, and each keyword is
+          // limited to 25 characters in length.
+          $term = substr(str_replace(' ', '-', trim($term)), 0, 25);
+        }
+        $keywords = implode(',', $keywords);
+      }
+    
+      // 120 character limit.
+      return substr($keywords, 0, 120);    
+
+    default:
+      return;
+  }
+}
+
+/**
+ * Implementation of hook_get_feed().
+ */
+function video_upload_provider_youtube_get_feed($connection, $params = array()) {
+  // get the raw YouTube video feed
+  $feed_raw = _video_upload_gdata_get_feed(VIDEO_UPLOAD_YOUTUBE_DEFAULT_USER_FEED, $connection);
+
+  // conform the returned feed to video_upload convention
+  $feed = array();
+
+  foreach ($feed_raw as $item) {
+      $video = new stdClass();
+      $video->video_id = $item->getVideoId();
+      $video->title = $item->getVideoTitle();
+      $video->provider = 'youtube';
+      $feed['videos'][] = $video;
+  }
+
+  return $feed;
+}
+
+/**
+ * Sets developer tags.
+ * @return array
+ */
+function _video_upload_provider_youtube_set_developer_tags($node, $widget) {
+  if ($widget['developer_tags']) {
+    $tags = explode(',', $widget['developer_tags']);
+  }
+  else {
+    return array(substr(str_replace(array(',', ' '), '', trim(variable_get('site_name', 'Drupal'))), 0, 25));
+  }
+
+  if (module_exists('token')) {
+    global $user;
+    foreach ($tags as $key => $tag) {
+      // There seems to be an invisible 26 character limit.
+      // @TODO This is YouTube specific.
+      $tags[$key] = substr(str_replace(array(',', ' '), '', trim(check_plain(token_replace($tag, 'user', $user)))), 0, 25);
+    }
+  }
+
+  return $tags;
+}

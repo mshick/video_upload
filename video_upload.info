@@ -1,0 +1,15 @@
+; $Id: video_upload.info,v 1.6.2.5.2.2 2010/05/05 00:36:03 jhedstrom Exp $
+name = Video Upload Field
+description = Upload video to YouTube
+core = 6.x
+package = CCK
+php = 5.1
+dependencies[] = libraries
+dependencies[] = content
+dependencies[] = filefield
+; Information added by drupal.org packaging script on 2010-07-11
+version = "6.x-2.x-dev"
+core = "6.x"
+project = "video_upload"
+datestamp = "1278807657"
+

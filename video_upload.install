@@ -1,0 +1,188 @@
+<?php
+
+// $Id: video_upload.install,v 1.13.2.4.2.2 2010/05/05 00:36:03 jhedstrom Exp $
+
+/**
+ * @file
+ * Install/Uninstall/Enable/Disable hooks
+ */
+
+// Updates happen in random order, whether or not the module is enabled,
+// so include critical code here just to be sure.
+include_once drupal_get_path('module', 'content') .'/content.module';
+
+/**
+ * Implementation of hook_install().
+ */
+function video_upload_install() {
+  // Notify CCK.
+  drupal_load('module', 'content');
+  content_notify('install', 'video_upload');
+  drupal_set_message(t('Video Upload successfully installed, and can be configured <a href="!url">here</a>.', array('!url' => url('admin/settings/video-upload'))));
+}
+
+/**
+ * Implementation of hook_enable().
+ */
+function video_upload_enable() {
+  // Prepare video_upload files path
+  $path = file_directory_path() .'/video_upload';
+  if (!is_dir($path)) {
+    if (mkdir($path, 0777)) {
+      @chmod($path, 0775);
+      drupal_set_message(t('The directory %path has been created.', array('%path' => $path)));
+    }
+    else {
+      drupal_set_message(t("Can't create %path, please create it manually.", array('%path' => $path)));
+    }
+  }
+  
+  // Notify CCK.
+  drupal_load('module', 'content');
+  content_notify('enable', 'video_upload');
+}
+
+/**
+ * Implementation of hook_disable().
+ */
+function video_upload_disable() {
+  // Notify CCK.
+  drupal_load('module', 'content');
+  content_notify('disable', 'video_upload');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function video_upload_uninstall() {
+  // Notify CCK.
+  drupal_load('module', 'content');
+  content_notify('uninstall', 'video_upload');
+
+  variable_del('video_upload_youtube_developer_key');
+  variable_del('video_upload_youtube_username');
+  variable_del('video_upload_youtube_password');
+}
+
+
+/**
+ * Implementation of hook_update_N().
+ *
+ * - Prefix "video_" onto status, status_ts and id column names.
+ * - Updates constants to simple text values rather than ambigous integers.
+ */
+function video_upload_update_6001() {
+  module_load_include('inc', 'content', 'includes/content.crud');
+
+  $fields = content_fields();
+  foreach ($fields as $field) {
+    if ($field['type'] == 'video_upload') {
+      $db_info = content_database_info($field);
+      if (isset($db_info['columns']['fid'])) {
+        $table = $db_info['table'];
+        // We're interested in id, status and status_ts.
+        $id_column = $db_info['columns']['id']['column'];
+        $id_schema = $db_info['columns']['id'];
+        db_change_field($ret, $table, $id_column, preg_replace('/(_id)$/', '_video_id', $id_column), $id_schema);
+
+        $status_column = $db_info['columns']['status']['column'];
+        $status_schema = $db_info['columns']['status'];
+        // Change type to varchar(32).
+        $status_schema['type'] = 'varchar';
+        $status_schema['length'] = 32;
+        $status_schema['default'] = VIDEO_UPLOAD_STATUS_UPLOAD_PENDING;
+        $new_status_column = preg_replace('/(_status)$/', '_video_status', $status_column);
+        db_change_field($ret, $table, $status_column, $new_status_column, $status_schema);
+
+        $status_ts_column = $db_info['columns']['status_ts']['column'];
+        $status_ts_schema = $db_info['columns']['status_ts'];
+        db_change_field($ret, $table, $status_ts_column, preg_replace('/(_status_ts)$/', '_video_status_ts', $status_ts_column), $status_ts_schema);
+
+        // Update to new constants.
+        foreach (_video_upload_update_6001_map_old_constants() as $old_status => $new_status) {
+          $ret[] = update_sql("UPDATE {" . $table . "} SET " . $new_status_column . " = '" . $new_status . "' WHERE " . $new_status_column . " = " . $old_status);
+        }
+
+        // Update CCK field definition.
+        $new_columns = $field['columns'];
+        foreach (array('id', 'status', 'status_ts') as $column) {
+          $new_columns['video_' . $column] = $new_columns[$column];
+          unset($new_columns[$column]);
+        }
+        $new_columns['video_status'] = $status_schema;
+        // Update table directly since CCK doesn't yet know that the
+        // module is filefield instead of video upload.
+        $record = new stdClass;
+        $record->db_columns = $new_columns;
+        $record->field_name = $field['field_name'];
+        drupal_write_record(content_field_tablename(), $record, 'field_name');
+      }
+    }
+  }
+
+  // Force a rebuild of CCK's type cache.
+  content_clear_type_cache(TRUE);
+
+  return $ret;
+}
+
+/**
+ * Map old constants to more sensbile values.
+ */
+function _video_upload_update_6001_map_old_constants() {
+  return array(
+    -3 => VIDEO_UPLOAD_STATUS_ORPHANED,
+    -2 => VIDEO_UPLOAD_STATUS_DELETE,
+    -1 => VIDEO_UPLOAD_STATUS_BAD,
+    0 => VIDEO_UPLOAD_STATUS_UNKNOWN,
+    1 => VIDEO_UPLOAD_STATUS_OK,
+    2 => VIDEO_UPLOAD_STATUS_OK_SYNCED,
+    3 => VIDEO_UPLOAD_STATUS_UPLOAD_PENDING,
+  );
+}
+
+/**
+ * Create a new provider column for videos
+ */
+function video_upload_update_6002() {
+  module_load_include('inc', 'content', 'includes/content.crud');
+  $fields = content_fields();
+
+  foreach ($fields as $field) {
+    if ($field['type'] == 'video_upload') {
+      $db_info = content_database_info($field);
+      if (isset($db_info['columns']['fid'])) {
+        $table = $db_info['table'];
+
+        // Create a new column for storing the provider
+        $provider_schema = array();
+        $provider_schema['type'] = 'varchar';
+        $provider_schema['length'] = 32;
+        $provider_schema['views'] = 1;
+        $provider_schema['default'] = 'youtube';
+        $provider_column = $field['field_name'] . '_video_provider';
+        db_add_field($ret, $table, $provider_column, $provider_schema);
+
+        // Remove the default for status fields, which causes false uploads when CCK writes empty record
+        $status_column = $db_info['columns']['video_status']['column'];
+        db_field_set_no_default($ret, $table, $status_column);
+
+        // Update CCK field definition.
+        $new_columns = $field['columns'];
+        $new_columns['video_provider'] = $provider_schema;
+        // Update table directly since CCK doesn't yet know that the
+        // module is filefield instead of video upload.
+        $record = new stdClass;
+        $record->db_columns = $new_column;
+        $record->field_name = $field['field_name'];
+
+        drupal_write_record(content_field_tablename(), $record, 'field_name');
+      }
+    }
+  }
+
+  // Force a rebuild of CCK's type cache.
+  content_clear_type_cache(TRUE);
+
+  return $ret;
+}

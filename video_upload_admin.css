@@ -1,0 +1,34 @@
+/* $Id: video_upload_admin.css,v 1.2 2008/05/26 17:05:36 jhedstrom Exp $ */
+
+/**
+ * @file
+ * CSS for Video Upload admin page
+ */
+tr.video-upload-orphaned.odd, tr.video-upload-orphaned.even,
+tr.video-upload-orphaned.odd a, tr.video-upload-orphaned.even a {
+  background-color: #ffcdcd;
+  color: #000000;
+}
+
+.video-upload-admin tr, .video-upload-admin td { 
+  padding: 0px .75em;
+}
+
+/**
+ * Status messages
+ */
+tr .video-upload-status { 
+  display: block;
+  padding: 5px;
+  text-align: center;
+}
+tr .video-upload-status-bad { 
+  background-color: red;
+  color: white;
+  font-weight: bold;
+  font-size: 120%;
+}
+tr .video-upload-status-ok, tr .video-upload-status-ok-synced { 
+  background-color: #0d9e0d;
+  color: #ffffff;
+}

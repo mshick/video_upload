@@ -1,0 +1,114 @@
+$Id: CHANGELOG,v 1.12.2.3.2.8 2010/06/11 17:04:18 bojanz Exp $
+
+DRUPAL-6--2-0, XXXX-XX-XX
+-------------------------
+- #668546 by bojanz, Add support for browser upload method
+- #757600 by bojanz, Feature to remove file from files/ after upload to youtube
+- #611380 by Agileware, Call to undefined function _video_upload_node_set_video_status() in video_upload.admin.inc on line 421
+
+DRUPAL-6--1-5, 2009-10-10 
+-------------------------
+- #566740, fixed file referencing validation error.
+
+DRUPAL-6--1-4, 2009-09-03
+-------------------------
+- Removed erroneously committed debugging code.
+
+DRUPAL-6--1-3, 2009-08-27
+-------------------------
+- Updated to match the new FileField API.
+- #461082 Fixed embedding issue with Safari
+- #461552 Place holder image shows up when no video uploaded
+
+DRUPAL-6--1-2, 2009-02-26
+-------------------------
+- Updated to use YouTube API 2.0
+- Code and comment style cleanup.
+- Added Zend GData version check to hook_requirements().
+
+DRUPAL-6--1-1, 2009-02-24
+-------------------------
+- HTML tags are now stripped out of the description field sent to
+  Youtube.
+- Conflicts with file status field (from filefield) have been fixed
+  which seems to resolve elusive upload failure issues.
+- More elegant default video processing images.
+
+DRUPAL-6--1-0, 2008-12-31
+-------------------------
+- Default keywords are now validated to avoid provider upload
+  conflicts.
+- Added option to toggle fullscreen button on embedded video.
+- Updated default sizes to match YouTube's new widescreen ratios.
+- Added default images for videos that are being processed.
+- YouTube as a provider has been partially abstracted to the providers
+  directory, and integrated through video_upload hooks such that
+  adding additional providers in the future should be a matter of
+  implementing the required hooks.
+- Direct upload method now implemented via the FileField widget
+  system.
+- Take advantage of a few Zend GData library optimizations.
+- Added a views handler for filtering on video status.
+- Added SimpleTests for YouTube authentication, CCK field creation,
+  YouTube upload and removal.
+
+DRUPAL-5, 2008-05-23
+--------------------
+- Created custom handlers for onsubmit and oncomplete to override the
+  upload.js handlers to account for the bug described in #260792
+- Modified the admin listing to display local video that has been
+  removed from YouTube, and thus orphaned, as described in #261182
+
+
+DRUPAL-5, 2008-05-09
+--------------------
+- Fixed improperly formatted calls to the t() function in
+  zend_gdata.inc
+
+
+DRUPAL-5, 2008-05-07
+--------------------
+- Added new display formatter, thumbnail as link
+- Fixed bug in which taxonomy terms longer than 25 characters in
+  length would cause YouTube to reject the video
+- Slight css changes to the video_upload admin page
+
+
+DRUPAL-5, 2008-05-05
+--------------------
+- Added autoplay and related video display options
+- Added initial thumbnail display configuration and output
+- Added Zend_Gdata_App_HttpException handling for failed connections
+- fixed authentication bug
+
+DRUPAL-5, 2008-05-02
+--------------------
+- Added a js progress bar to preview/submit button functionality
+- Added node token support for the default description field
+- Fixed a bug in which the jquery was failing on pages where a search
+  form was present
+- Re-ordering of logic in _video_upload_widget_form() for better error
+  handling
+- Added widget configuration options for YouTube synchronization of
+  title, keywords and description
+
+
+DRUPAL-5, 2008-05-01
+--------------------
+- Fixed a YouTube category bug, only to find an actual bug in the API.
+- Fixed widget_info hook bug
+- Added a video admin page/form for tracking all videos, and deleting
+  orphaned videos
+- Abstracted video status numbers into constants for easier
+  readability
+
+
+DRUPAL-5, 2008-04-30
+--------------------
+- Field name is now automatically sent to YouTube as a "developer tag"
+
+
+DRUPAL-5, 2008-04-29
+--------------------
+- Video status checking, updating and deleting now enabled for node
+  deletes, and on cron

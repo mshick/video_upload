@@ -1,0 +1,56 @@
+$Id: INSTALL.txt,v 1.12.2.3.2.3 2010/05/14 14:08:01 bojanz Exp $
+
+Video Upload module installation instructions
+---------------------------------------------
+
+YouTube Provider
+----------------
+
+1) Download the Zend GData client library:
+
+   http://framework.zend.com/download/gdata/
+
+2) a) Extract the tar archive, and move the subdirectory library/Zend into
+      this directory. For example:
+
+        mv ~/downloads/ZendGdata-1.x.x/library/Zend/ /path/to/drupal/modules/video_upload/providers/youtube
+
+      replacing 1.x.x with the actual version. The current build has been tested with 1.7.2.
+
+   -or-
+
+   b) Install the libary somewhere in the existing PHP include_path of
+      the server.
+
+3) Enable the Video Upload module via admin/build/modules
+
+4) Browse to admin/settings/video_upload and complete the necessary
+   fields.
+
+5) Note, if using the direct upload method (video from user to server,
+   from server to provider), the videos are sent to the provider
+   during cron processing. As such, it may be desirable to have a
+   more frequent cron job so users don't wait too long.
+
+   Additionally, the default PHP settings for upload_max_filesize and
+   post_max_size (8MB) are far too low for handling video, and should
+   be bumped up to a more appropriate limit.
+   
+6) Note, the browser upload method (video from user to provider)
+   requires that the jQuery UI module (http://drupal.org/project/jquery_ui) be installed.
+
+7) Add a video upload field to a content type and start uploading
+   video.
+
+8) Make sure that your Drupal site has cron configured
+   (http://drupal.org/cron), since this is how files are transmitted
+   to the video provider.
+
+9) OPTIONAL: To run tests on this module, add account information to
+   your settings.php file in the form:
+
+     $GLOBALS['video_upload_test_account'] = array(
+       'video_upload_youtube_developer_key' => {KEY},
+       'video_upload_youtube_username' => {USERNAME},
+       'video_upload_youtube_password' => {PASSWORD},
+     );
